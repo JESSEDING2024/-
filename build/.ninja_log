@@ -1,0 +1,9 @@
+# ninja log v7
+3	949	8067056094395120	CMakeFiles/whiteboard_pipeline.dir/src/main.cpp.obj	429676e2fb80f48d
+950	1135	8067056103845723	whiteboard_pipeline.exe	db0420a46302282c
+12	973	8067056596799620	CMakeFiles/whiteboard_pipeline.dir/src/main.cpp.obj	429676e2fb80f48d
+974	1174	8067056606412713	whiteboard_pipeline.exe	db0420a46302282c
+5	1011	8067058906380803	CMakeFiles/whiteboard_pipeline.dir/src/main.cpp.obj	429676e2fb80f48d
+1012	1216	8067058916448937	whiteboard_pipeline.exe	db0420a46302282c
+5	969	8067059472531604	CMakeFiles/whiteboard_pipeline.dir/src/main.cpp.obj	429676e2fb80f48d
+970	1270	8067059482177310	whiteboard_pipeline.exe	db0420a46302282c
