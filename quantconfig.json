@@ -1,0 +1,11 @@
+{
+    "format": "RGB",
+    "mean": [0.0, 0.0, 0.0],
+    "normal": [0.0039215, 0.0039215, 0.0039215],
+    "width": 256,
+    "height": 256,
+    "path": "D:\\Project2\\calibration_set",
+    "used_image_num": 1,
+    "feature_quantize_method": "KL",
+    "weight_quantize_method": "MAX_ABS"
+}

@@ -1,4 +1,5 @@
 #include <opencv2/highgui.hpp>
+#include <opencv2/core/ocl.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
 #include <MNN/Interpreter.hpp>
@@ -22,9 +23,9 @@
 #include <opencv2/opencv.hpp>
 #include <vector>
 #include <algorithm>
-
+#include "whiteboardenchance.h"
 // 辅助函数：对四个角点进行排序 (确保顺序为: 左上、右上、右下、左下)
-void sortCorners(std::vector<cv::Point>& pts) {
+void sortCorners(std::vector<cv::Point2f>& pts) {
     if (pts.size() != 4) return;
 
     // 按照 y 坐标排序，分出上下两组
@@ -52,7 +53,7 @@ void sortCorners(std::vector<cv::Point>& pts) {
 }
 
 // 透视变换与去阴影处理函数
-cv::Mat enhanceWhiteboard(const cv::Mat& src_image, std::vector<cv::Point> corners) {
+cv::Mat enhanceWhiteboard(const cv::Mat& src_image, std::vector<cv::Point2f> corners) {
     if (corners.size() != 4) {
         return src_image.clone();
     }
@@ -225,7 +226,7 @@ void captureLoop(const Options& options, LatestDoubleBuffer<Frame>& frameBuffer,
 
 // 推理结果结构体
 struct InferenceResult {
-    std::vector<cv::Point> corners;
+    std::vector<cv::Point2f> corners;
     bool success = false;
     std::uint64_t sequence = 0;
 };
@@ -276,6 +277,9 @@ void inferenceLoop(LatestDoubleBuffer<Frame>& frameBuffer,
             float* out_data = host_output.host<float>();
             int plane_size = hm_width * hm_height;
 
+            // 1. 创建一个容器，专门存放 AI 输出的浮点数类型“粗坐标”
+            std::vector<cv::Point2f> rough_corners;
+
             for (int c = 0; c < 4; ++c) {
                 float max_val = -1e9;
                 int max_idx = 0;
@@ -289,9 +293,35 @@ void inferenceLoop(LatestDoubleBuffer<Frame>& frameBuffer,
                 float hm_x = max_idx % hm_width;
                 float hm_y = max_idx / hm_width;
 
-                int orig_x = static_cast<int>((hm_x / hm_width) * frame.image.cols);
-                int orig_y = static_cast<int>((hm_y / hm_height) * frame.image.rows);
-                res.corners.push_back(cv::Point(orig_x, orig_y));
+                // 计算回原图的坐标，这里保留小数部分，存为 float
+                float orig_x = (hm_x / hm_width) * frame.image.cols;
+                float orig_y = (hm_y / hm_height) * frame.image.rows;
+                rough_corners.push_back(cv::Point2f(orig_x, orig_y));
+            }
+
+            // 2. 方案三核心：OpenCV 亚像素级角点精调 (Sub-pixel Refinement)
+            if (!rough_corners.empty()) {
+                cv::Mat gray_img;
+                // cornerSubPix 必须在单通道灰度图上运行
+                cv::cvtColor(frame.image, gray_img, cv::COLOR_BGR2GRAY);
+
+                // 配置搜索窗口大小：Size(5,5) 表示以粗坐标为中心，划定一个 11x11 (2*5+1) 的搜索区域
+                cv::Size winSize(5, 5);
+                // 死区大小：-1 表示不使用死区
+                cv::Size zeroZone(-1, -1);
+                // 迭代停止条件：最多迭代 40 次，或者精度达到 0.001 像素时停止
+                cv::TermCriteria criteria(cv::TermCriteria::EPS + cv::TermCriteria::MAX_ITER, 40, 0.001);
+
+                // 执行亚像素吸附！该函数会原地修改 rough_corners 里的坐标
+                cv::cornerSubPix(gray_img, rough_corners, winSize, zeroZone, criteria);
+
+                // 3. 将吸附优化后的极高精度坐标，保存进你的结果中
+                for (const auto& pt : rough_corners) {
+                    // 如果你的 res.corners 只能存整数 (cv::Point)，这里做四舍五入。
+                    // 强烈建议：后续把 InferenceResult 里的 std::vector<cv::Point> 改成 std::vector<cv::Point2f>！
+                    // 透视变换 (getPerspectiveTransform) 接收带小数点的 Point2f 精度会更高。
+                    res.corners.push_back(cv::Point2f(pt.x, pt.y));
+                }
             }
             res.success = true;
         }
@@ -302,11 +332,12 @@ void inferenceLoop(LatestDoubleBuffer<Frame>& frameBuffer,
 }
 
 int main(int argc, char** argv) {
+    std::cout << cv::getBuildInformation() << std::endl;
     Options options;
     options.captureBackend = cv::CAP_ANY;
     cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_ERROR);
     // 初始化 MNN 模型
-    std::string model_path = "D:/Project2/models/lcnet100.mnn";
+    std::string model_path = "D:/Project2/models/lcnet100_int8.mnn";
     std::cout << "Loading the model: " << model_path << std::endl;
 
     std::shared_ptr<MNN::Interpreter> net(MNN::Interpreter::createFromFile(model_path.c_str()));
@@ -330,8 +361,8 @@ int main(int argc, char** argv) {
     LatestDoubleBuffer<Frame> frameBuffer;
     LatestDoubleBuffer<InferenceResult> resultBuffer;
     std::atomic_bool running(true);
-    FpsMeter captureFps;
-    FpsMeter processingFps;
+    FpsMeter captureFps;   // 1号计步器：专门负责统计摄像头采集帧率
+    FpsMeter processingFps; // 2号计步器：专门负责统计模型处理帧率
 
     // 启动抓帧线程与后台推理线程
     std::thread captureThread(captureLoop, std::ref(options), std::ref(frameBuffer),
@@ -352,7 +383,8 @@ int main(int argc, char** argv) {
     InferenceResult currentResult;
     bool hasValidFrame = false;
     bool hasValidResult = false;
-
+    std::cout << "Initializing OpenCL GPU Engine..." << std::endl;
+    OpenCLEnhancer gpuEnhancer;
     while (running.load()) {
         // 非阻塞或最新获取：刷新画面
         // 这里为了简单，我们用一个小技巧把双缓冲的数据流合在主线程显示
@@ -386,9 +418,24 @@ int main(int argc, char** argv) {
                 }
                 // ==============================================================
                 // 2. 新增：调用透视变换与去阴影函数，生成“拉平白净”的扫描件效果
-                cv::Mat enhancedDoc = enhanceWhiteboard(currentFrame.image, currentResult.corners);
+                //cv::Mat enhancedDoc = enhanceWhiteboard(currentFrame.image, currentResult.corners);
+                //cv::imshow("Enhanced Whiteboard", enhancedDoc);
+                //for (int i = 0;i<3000;i++){
+
+
+                // 检查 OpenCL 状态
+                if (!cv::ocl::haveOpenCL()) {
+                    std::cout << "[fatal error] system or OpenCV didnot support OpenCLforce to use CPU！" << std::endl;
+                } else {
+                    cv::ocl::setUseOpenCL(true);
+                    std::cout << "[successfully] OpenCL already Open！" << std::endl;
+                    cv::ocl::Context context = cv::ocl::Context::getDefault();
+                    std::cout << "The device which take over: " << context.device(0).name() << std::endl;
+                }
+
+                cv::Mat enhancedDoc = gpuEnhancer.process(currentFrame.image, currentResult.corners);
                 cv::imshow("Enhanced Whiteboard", enhancedDoc);
-                // ==============================================================
+           //} // ==============================================================
             }
 
             // 显示 FPS 信息
