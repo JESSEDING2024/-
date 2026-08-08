@@ -35,6 +35,8 @@ add_executable(whiteboard_pipeline
         CL/image_process.h.cpp
         src/BoardDetector.cpp
         src/BoardDetector.h
+        src/observeandui.cpp
+        src/observeandui.cpp
 
 )
 
@@ -58,7 +60,7 @@ target_include_directories(whiteboard_pipeline PRIVATE ${TENSORRT_DIR}/include)
 target_link_directories(whiteboard_pipeline PRIVATE ${TENSORRT_DIR}/lib)
 
 # 5. 真正把 TensorRT 核心库链接到你的项目上
-target_link_libraries(whiteboard_pipeline PRIVATE nvinfer)
+target_link_libraries(whiteboard_pipeline PRIVATE nvinfer_11)
 if(MSVC)
     target_compile_options(whiteboard_pipeline PRIVATE /W4 /permissive-)
 else()

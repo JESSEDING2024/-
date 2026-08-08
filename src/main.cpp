@@ -52,7 +52,7 @@ void sortCorners(std::vector<cv::Point2f>& pts) {
     pts = {tl, tr, br, bl};
 }
 
-// 透视变换与去阴影处理函数
+// 透视变换与去阴影处理函数(已经替换为OpenClenchance)
 cv::Mat enhanceWhiteboard(const cv::Mat& src_image, std::vector<cv::Point2f> corners) {
     if (corners.size() != 4) {
         return src_image.clone();
@@ -147,7 +147,10 @@ public:
 
     bool takeLatest(T& output, const std::atomic_bool& running) {
         std::unique_lock<std::mutex> lock(mutex_);
-        ready_.wait(lock, [&] { return hasReady_ || !running.load(); });
+        //ready_.wait(lock, [&] { return hasReady_ || !running.load(); }); //[&] 访问这个作用域的所有函数和变量 ,判断值为真则 接着把持锁
+        while (!(hasReady_ ||!running.load())) {
+         ready_.wait(lock);
+        }
         if (!hasReady_) {
             return false;
         }
@@ -372,11 +375,11 @@ int main(int argc, char** argv) {
 
     // 主线程：只负责极速 UI 渲染与事件响应 (再也不会未响应了！)
     if (options.display) {
-        cv::namedWindow("Whiteboard Pipeline - Stage 1", cv::WINDOW_NORMAL);
-        cv::namedWindow("Enhanced Whiteboard", cv::WINDOW_NORMAL);
+         cv::namedWindow("Whiteboard Pipeline - Stage 1", cv::WINDOW_NORMAL);
+         cv::namedWindow("Enhanced Whiteboard", cv::WINDOW_NORMAL);
 
         cv::resizeWindow("Whiteboard Pipeline - Stage 1", 800, 600);
-        cv::resizeWindow("Enhanced Whiteboard", 800, 600);
+         cv::resizeWindow("Enhanced Whiteboard", 800, 600);
     }
 
     Frame currentFrame;
@@ -385,18 +388,22 @@ int main(int argc, char** argv) {
     bool hasValidResult = false;
     std::cout << "Initializing OpenCL GPU Engine..." << std::endl;
     OpenCLEnhancer gpuEnhancer;
+    if (!cv::ocl::haveOpenCL()) {
+        std::cout << "[fatal error] system or OpenCV didnot support OpenCLforce to use CPU！" << std::endl;
+    } else {
+        cv::ocl::setUseOpenCL(true);
+        std::cout << "[successfully] OpenCL already Open" << std::endl;
+        cv::ocl::Context context = cv::ocl::Context::getDefault();
+        std::cout << "The device which take over: " << context.device(0).name() << std::endl;
+    }
     while (running.load()) {
         // 非阻塞或最新获取：刷新画面
-        // 这里为了简单，我们用一个小技巧把双缓冲的数据流合在主线程显示
-        // 实际上主线程只管 imshow
-
         // 尝试拿最新的一帧图像（如果有的话）
         Frame tempFrame;
         if (frameBuffer.takeLatest(tempFrame, running)) {
             currentFrame = std::move(tempFrame);
             hasValidFrame = true;
         }
-
         // 尝试拿最新的推理结果（如果有的话）
         InferenceResult tempRes;
         if (resultBuffer.takeLatest(tempRes, running)) {
@@ -408,43 +415,39 @@ int main(int argc, char** argv) {
         if (hasValidFrame) {
             cv::Mat preview = currentFrame.image;
 
-            // 如果有对应的角点结果，画在图上
-            if (hasValidResult && currentResult.success) {
+            // 如果AI处理后有对应的角点结果，画在图上
+            if (hasValidResult && currentResult.success && (currentResult.corners.size()== 4)) {
                 for (const auto& pt : currentResult.corners) {
                     cv::circle(preview, pt, 8, cv::Scalar(0, 0, 255), -1);
                 }
                 for (size_t i = 0; i < currentResult.corners.size(); ++i) {
                     cv::line(preview, currentResult.corners[i], currentResult.corners[(i + 1) % currentResult.corners.size()], cv::Scalar(255, 0, 0), 2);
                 }
-                // ==============================================================
-                // 2. 新增：调用透视变换与去阴影函数，生成“拉平白净”的扫描件效果
-                //cv::Mat enhancedDoc = enhanceWhiteboard(currentFrame.image, currentResult.corners);
-                //cv::imshow("Enhanced Whiteboard", enhancedDoc);
-                //for (int i = 0;i<3000;i++){
 
 
-                // 检查 OpenCL 状态
-                if (!cv::ocl::haveOpenCL()) {
-                    std::cout << "[fatal error] system or OpenCV didnot support OpenCLforce to use CPU！" << std::endl;
-                } else {
-                    cv::ocl::setUseOpenCL(true);
-                    std::cout << "[successfully] OpenCL already Open！" << std::endl;
-                    cv::ocl::Context context = cv::ocl::Context::getDefault();
-                    std::cout << "The device which take over: " << context.device(0).name() << std::endl;
-                }
 
-                cv::Mat enhancedDoc = gpuEnhancer.process(currentFrame.image, currentResult.corners);
-                cv::imshow("Enhanced Whiteboard", enhancedDoc);
-           //} // ==============================================================
+                // 显示 FPS 信息
+                std::ostringstream text;
+                text << std::fixed << std::setprecision(1)
+                     << "capture " << captureFps.fps() << " fps | process " << processingFps.fps() << " fps " << "| corners: "<<currentResult.corners.size();
+                cv::putText(preview, text.str(), {24, 42}, cv::FONT_HERSHEY_SIMPLEX, 0.75, {0, 255, 0}, 2, cv::LINE_AA);
+
+                cv::imshow("Whiteboard Pipeline - Stage 1", preview);
+
             }
+            // 1. 获取 AI 裁剪拉平后的原始画面（尺寸可能是扭曲的）
+            cv::Mat enhancedDoc = gpuEnhancer.process(currentFrame.image, currentResult.corners);
 
-            // 显示 FPS 信息
-            std::ostringstream text;
-            text << std::fixed << std::setprecision(1)
-                 << "capture " << captureFps.fps() << " fps | process " << processingFps.fps() << " fps";
-            cv::putText(preview, text.str(), {24, 42}, cv::FONT_HERSHEY_SIMPLEX, 0.75, {0, 255, 0}, 2, cv::LINE_AA);
+            cv::resize(enhancedDoc, enhancedDoc, cv::Size(800, 600));
 
-            cv::imshow("Whiteboard Pipeline - Stage 1", preview);
+            // 2. 在固定好比例的“干净画布”上写字
+            std::ostringstream text2;
+            text2 << std::fixed << std::setprecision(1)
+                  << "process " << processingFps.fps() << " fps"; // 建议这里改成 processingFps
+            cv::putText(enhancedDoc, text2.str(), {24, 42}, cv::FONT_HERSHEY_COMPLEX, 1.00, {0, 255, 0}, 2, cv::LINE_AA);
+            // 3. 显示出来，此时字体绝对端正！
+            cv::imshow("Enhanced Whiteboard", enhancedDoc);
+
         }
 
         int key = cv::waitKey(1);
@@ -453,16 +456,16 @@ int main(int argc, char** argv) {
             frameBuffer.wakeAll();
             resultBuffer.wakeAll();
             break;
+           }
+       }
+
+            // 回收子线程
+            captureThread.join();
+            inferenceThread.join();
+
+            if (options.display) {
+                cv::destroyAllWindows();
+            }
+
+            return 0;
         }
-    }
-
-    // 回收子线程
-    captureThread.join();
-    inferenceThread.join();
-
-    if (options.display) {
-        cv::destroyAllWindows();
-    }
-
-    return 0;
-}

@@ -11,11 +11,11 @@ std::unique_ptr<BoardDetector> detector_factory(const std::string& type) {
            return std::make_unique<MNNOpenCLDetector>();
       }else {
           //return nullptr;
-           return std::make_unique<NULL>();
+           return nullptr;
       }
 }
 
-void Tensort:: log(Severity severity, const char* msg) noexcept override{
+void TensortLogger:: log(Severity severity, const char* msg) noexcept {
     if (severity <=Severity::kWARNING) std:: cerr<< msg << std::endl;
 }
 
@@ -101,10 +101,10 @@ std::vector<cv::Point2f> TensortDetector ::detectCorners(const cv::Mat& frame){
         //return std::vector<cv::Point2f>();
     }
 
-     // ==========================================================
-     // 1. 图像预处理 (LetterBox + BGR转RGB + 归一化 + HWC转CHW)
-     // ==========================================================
-     //将任意尺寸的原始图片，在不改变画面长宽比（不发生拉伸变形）的前提下，缩放并放入模型要求的固定输入尺寸中
+         // ==========================================================
+         // 1. 图像预处理 (LetterBox + BGR转RGB + 归一化 + HWC转CHW)
+         // ==========================================================
+        //将任意尺寸的原始图片，在不改变画面长宽比（不发生拉伸变形）的前提下，缩放并放入模型要求的固定输入尺寸中
         //计算缩放比例
          const float scale = std::min((float)model_width/frame.cols,(float)model_height/frame.rows);
         //缩小后的实际宽高

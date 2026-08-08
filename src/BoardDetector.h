@@ -21,7 +21,7 @@
 
 
 #include <opencv2/opencv.hpp>
-class tnsortLogger:public nvinfer1::ILogger {
+class TensortLogger:public nvinfer1::ILogger {
     //Severity severity表示当前日志的严重级别（枚举类型）
     //const char* msg：表示具体的日志文本内容
 public:
