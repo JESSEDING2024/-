@@ -13,7 +13,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # ================= 1. 查找通过 vcpkg 安装的 OpenCV =================
 find_package(OpenCV REQUIRED COMPONENTS core imgproc highgui videoio)
+
 find_package(OpenCL REQUIRED)
+find_package(CUDAToolkit REQUIRED)
 # ================= 2. 源码级引入 MNN (关闭不需要的周边工具以加快编译) =================
 # 强行关闭 MNN 的辅助工具，我们只需要核心推理库
 set(MNN_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
@@ -31,6 +33,8 @@ add_executable(whiteboard_pipeline
         CL/image_process.cl
         src/whiteboardenchance.h
         CL/image_process.h.cpp
+        src/BoardDetector.cpp
+        src/BoardDetector.h
 
 )
 
@@ -38,12 +42,23 @@ add_executable(whiteboard_pipeline
 # 修复 C1083 报错：让编译器知道去哪里找 MNN/Interpreter.hpp
 target_include_directories(whiteboard_pipeline PRIVATE third_party/MNN/include)
 target_link_libraries(whiteboard_pipeline PRIVATE OpenCL::OpenCL)
-# 将 OpenCV 和 MNN 共同链接到你的执行文件上
+# 将 OpenCV 和 MNN cuda 共同链接到你的执行文件上
 target_link_libraries(whiteboard_pipeline PRIVATE
         ${OpenCV_LIBS}
         MNN
 )
+target_link_libraries(
+        whiteboard_pipeline PRIVATE CUDA::cudart
+)
+set(TENSORRT_DIR "D:/TensorRT-11.2.1.2")
+# 3. 告诉项目去哪里找 NvInfer.h (将 include 目录加进去)
+target_include_directories(whiteboard_pipeline PRIVATE ${TENSORRT_DIR}/include)
 
+# 4. 告诉项目去哪里找 nvinfer.lib 等库文件
+target_link_directories(whiteboard_pipeline PRIVATE ${TENSORRT_DIR}/lib)
+
+# 5. 真正把 TensorRT 核心库链接到你的项目上
+target_link_libraries(whiteboard_pipeline PRIVATE nvinfer)
 if(MSVC)
     target_compile_options(whiteboard_pipeline PRIVATE /W4 /permissive-)
 else()
