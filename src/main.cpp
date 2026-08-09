@@ -437,7 +437,7 @@ int main(int argc, char** argv) {
             }
             // 1. 获取 AI 裁剪拉平后的原始画面（尺寸可能是扭曲的）
             cv::Mat enhancedDoc = gpuEnhancer.process(currentFrame.image, currentResult.corners);
-
+            //动态计算以后，固定比例
             cv::resize(enhancedDoc, enhancedDoc, cv::Size(800, 600));
 
             // 2. 在固定好比例的“干净画布”上写字
@@ -468,4 +468,4 @@ int main(int argc, char** argv) {
             }
 
             return 0;
-        }
+   }

@@ -48,6 +48,7 @@ static void sortCorners(std::vector<cv::Point2f>& pts) {
 
     pts = {tl, tr, br, bl};
 }
+
 // ---------------------------------------------------------
 // 新增：OpenCL 硬件加速器类
 // ---------------------------------------------------------
@@ -100,7 +101,7 @@ cv::Mat OpenCLEnhancer::process(const cv::Mat& src_image, std::vector<cv::Point2
     // 1. 确保角点顺序正确
     sortCorners(corners);
 
-    // 2. 计算目标尺寸
+    // 2. 计算目标尺寸，动态计算输出频率
     int out_width = std::max(cv::norm(corners[1] - corners[0]), cv::norm(corners[2] - corners[3]));
     int out_height = std::max(cv::norm(corners[3] - corners[0]), cv::norm(corners[2] - corners[1]));
 
@@ -127,9 +128,9 @@ cv::Mat OpenCLEnhancer::process(const cv::Mat& src_image, std::vector<cv::Point2
     src_image.copyTo(gpu_src);
 
     // 1. GPU 上的透视变换 (内部自动调用 OpenCL 优化)
-    cv::warpPerspective(gpu_src, gpu_warped, matrix, cv::Size(out_width, out_height));
+    cv::warpPerspective(gpu_src, gpu_warped, matrix, cv::Size(out_width, out_height),cv::INTER_LANCZOS4);
 
-    // 2. GPU 上的灰度转换
+    // 2. 在GPU上实现的灰度转换
     cv::cvtColor(gpu_warped, gpu_gray, cv::COLOR_BGR2GRAY);
 
     // 3. GPU 上的自适应阈值 (去阴影二值化，极度消耗算力，利用 GPU 加速效果最好)
